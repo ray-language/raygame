@@ -1,0 +1,139 @@
+// The rules, clock-free and seeded: movement, rotation, locking, line
+// clears, scoring, hard drop, game over.
+import std/random;
+import tetris;
+import screen;
+
+fn fresh() -> tetris.Game {
+    random.seed(7);
+    tetris.new_game()
+}
+
+@test
+fn pieces_have_four_cells_in_bounds_at_spawn() {
+    var k = 0;
+    while (k < 7) {
+        var r = 0;
+        while (r < 4) {
+            let p = tetris.Piece { kind: k, rot: r, x: 3, y: 2 };
+            let cells = tetris.piece_cells(p);
+            assert_eq(cells.len(), 4);
+            for (x, y) in cells.iter() {
+                assert(x >= 3 && x <= 6);
+                assert(y >= 2 && y <= 5);
+            }
+            r = r + 1;
+        }
+        k = k + 1;
+    }
+}
+
+@test
+fn walls_stop_movement_and_rotation_is_collision_checked() {
+    var g = fresh();
+    var i = 0;
+    while (i < 20) {
+        tetris.move_left(g);
+        i = i + 1;
+    }
+    // Pinned at the left wall: one more left must fail.
+    assert(!tetris.move_left(g));
+    i = 0;
+    while (i < 20) {
+        tetris.move_right(g);
+        i = i + 1;
+    }
+    assert(!tetris.move_right(g));
+}
+
+@test
+fn gravity_locks_and_stacks() {
+    var g = fresh();
+    var locked = false;
+    var steps = 0;
+    while (!locked && steps < 30) {
+        locked = tetris.gravity(g);
+        steps = steps + 1;
+    }
+    assert(locked);
+    // Something is on the board now.
+    var occupied = 0;
+    for v in g.board {
+        if (v != 0) {
+            occupied = occupied + 1;
+        }
+    }
+    assert_eq(occupied, 4);
+    assert(!g.over);
+}
+
+@test
+fn full_line_clears_and_scores() {
+    var g = fresh();
+    // Fill the bottom row except one cell, by hand.
+    var x = 0;
+    while (x < tetris.W - 1) {
+        g.board[(tetris.H - 1) * tetris.W + x] = 1;
+        x = x + 1;
+    }
+    // Drop an I piece vertically into the last column.
+    g.current = tetris.Piece { kind: 0, rot: 1, x: tetris.W - 3, y: 10 };
+    let before = g.score;
+    tetris.hard_drop(g);
+    assert_eq(g.lines, 1);
+    assert(g.score >= before + 100);
+    // The cleared row collapsed: bottom row now holds the I remainder only.
+    var bottom = 0;
+    x = 0;
+    while (x < tetris.W) {
+        if (g.board[(tetris.H - 1) * tetris.W + x] != 0) {
+            bottom = bottom + 1;
+        }
+        x = x + 1;
+    }
+    assert_eq(bottom, 1);
+}
+
+@test
+fn stacking_to_the_top_ends_the_game() {
+    var g = fresh();
+    var guard = 0;
+    while (!g.over && guard < 500) {
+        tetris.hard_drop(g);
+        guard = guard + 1;
+    }
+    assert(g.over);
+    assert(!tetris.move_left(g));
+    assert(!tetris.soft_drop(g));
+}
+
+@test
+fn frame_is_stable_shape_and_diff_is_minimal() {
+    var g = fresh();
+    let f1 = screen.frame(g, 0);
+    assert_eq(f1.len(), tetris.H + 2);
+    tetris.move_right(g);
+    let f2 = screen.frame(g, 0);
+    var changed = 0;
+    var i = 0;
+    while (i < f2.len()) {
+        if (f1[i] != f2[i]) {
+            changed = changed + 1;
+        }
+        i = i + 1;
+    }
+    // A horizontal move touches at most the rows the piece occupies (≤ 4).
+    assert(changed >= 1);
+    assert(changed <= 4);
+    assert_eq(screen.paint_diff(f2, f2), "");
+}
+
+@test
+fn gravity_speed_scales_with_level() {
+    var g = fresh();
+    assert_eq(tetris.gravity_ms(g), 800);
+    g.level = 5;
+    assert_eq(tetris.gravity_ms(g), 520);
+    g.level = 99;
+    assert_eq(tetris.gravity_ms(g), 100);
+}

@@ -1,0 +1,236 @@
+// raygame — the 30 fps loop: input-or-frame-deadline, gravity on its own
+// clock, diff repaints. The hard-latency variant of the raytop pattern.
+import std/io;
+import std/fs;
+import std/time;
+import std/term;
+from std/term import Key;
+import tetris;
+import screen;
+
+const FRAME_MS: int = 33;
+
+fn write_now(s: string) {
+    io.write(s);
+    io.flush();
+}
+
+fn hiscore_path() -> string {
+    match (env("HOME")) {
+        Option.Some(h) => h + "/.raygame_hiscore",
+        Option.None => "/tmp/.raygame_hiscore",
+    }
+}
+
+fn load_hiscore() -> int {
+    match (fs.read_file(hiscore_path())) {
+        Result.Ok(s) => {
+            match (parse_int(s.trim())) {
+                Option.Some(n) => n,
+                Option.None => 0,
+            }
+        },
+        Result.Err(e) => 0,
+    }
+}
+
+fn save_hiscore(n: int) {
+    fs.write_file(hiscore_path(), to_string(n));
+}
+
+struct App {
+    g: tetris.Game,
+    prev: [string],
+    pending: bytes,
+    hiscore: int,
+    paused: bool,
+    quit: bool,
+}
+
+fn repaint(a: App) {
+    let next = screen.frame(a.g, a.hiscore);
+    let ops = screen.paint_diff(a.prev, next);
+    if (ops != "") {
+        write_now(ops);
+    }
+    a.prev = next;
+}
+
+fn on_key(a: App, k: Key) {
+    match (k) {
+        Key.Char(c) => {
+            if (c == 'q') {
+                a.quit = true;
+            } else if (c == 'p') {
+                a.paused = !a.paused;
+            } else if (c == ' ') {
+                if (!a.paused) {
+                    tetris.hard_drop(a.g);
+                }
+            } else if (c == 'r') {
+                if (a.g.over) {
+                    a.g = tetris.new_game();
+                }
+            }
+        },
+        Key.Ctrl(c) => {
+            if (c == 'c') {
+                a.quit = true;
+            }
+        },
+        Key.Left => {
+            if (!a.paused) {
+                tetris.move_left(a.g);
+            }
+        },
+        Key.Right => {
+            if (!a.paused) {
+                tetris.move_right(a.g);
+            }
+        },
+        Key.Up => {
+            if (!a.paused) {
+                tetris.rotate(a.g);
+            }
+        },
+        Key.Down => {
+            if (!a.paused) {
+                tetris.soft_drop(a.g);
+            }
+        },
+        _ => { },
+    }
+}
+
+fn drain_keys(a: App) {
+    var more = true;
+    while (more && a.pending.len() > 0 && !a.quit) {
+        match (term.decode(a.pending)) {
+            Option.Some(decoded) => {
+                a.pending = a.pending.sub_bytes(decoded.1, a.pending.len());
+                on_key(a, decoded.0);
+            },
+            Option.None => {
+                more = false;
+                if (a.pending == b"\x1b") {
+                    a.pending = b"";
+                }
+            },
+        }
+    }
+}
+
+fn event_loop() -> int {
+    var empty: [string] = [];
+    let a = App {
+        g: tetris.new_game(),
+        prev: empty,
+        pending: b"",
+        hiscore: load_hiscore(),
+        paused: false,
+        quit: false
+    };
+    let e = screen.esc();
+    write_now(e + "[?1049h" + e + "[?25l" + e + "[2J" + e + "[H");
+    repaint(a);
+    var next_frame = time.monotonic() + FRAME_MS;
+    var next_gravity = time.monotonic() + tetris.gravity_ms(a.g);
+    while (!a.quit) {
+        let now = time.monotonic();
+        if (!a.paused && !a.g.over && now >= next_gravity) {
+            tetris.gravity(a.g);
+            next_gravity = now + tetris.gravity_ms(a.g);
+            if (a.g.over && a.g.score > a.hiscore) {
+                a.hiscore = a.g.score;
+                save_hiscore(a.hiscore);
+            }
+        }
+        var wait = next_frame - time.monotonic();
+        if (wait < 1) {
+            wait = 1;
+        }
+        match (io.read_timeout(64, wait)) {
+            io.ReadResult.Data(chunk) => {
+                a.pending = a.pending + chunk;
+                drain_keys(a);
+                if (a.g.over && a.g.score > a.hiscore) {
+                    a.hiscore = a.g.score;
+                    save_hiscore(a.hiscore);
+                }
+            },
+            io.ReadResult.TimedOut => { },
+            io.ReadResult.Eof => {
+                a.quit = true;
+            },
+        }
+        if (time.monotonic() >= next_frame) {
+            repaint(a);
+            next_frame = next_frame + FRAME_MS;
+            if (next_frame < time.monotonic()) {
+                next_frame = time.monotonic() + FRAME_MS;
+            }
+        }
+    }
+    write_now(e + "[?1049l" + e + "[?25h");
+    print(
+        "score " + to_string(a.g.score) + " · lines " + to_string(a.g.lines) + " · hi " + to_string(a.hiscore)
+    );
+    0
+}
+
+pub fn play() -> int {
+    if (!term.is_tty(0) || !term.is_tty(1)) {
+        eprint("raygame: needs a terminal");
+        return 1;
+    }
+    match (term.raw(fn() -> int { event_loop() })) {
+        Result.Ok(code) => code,
+        Result.Err(e) => {
+            eprint("raygame: " + e);
+            1
+        },
+    }
+}
+
+// --bench: the frame-latency data the catalog wanted — frame build + diff
+// cost, and sleep(33) jitter (can the runtime hold 30 fps?).
+pub fn bench() -> int {
+    var g = tetris.new_game();
+    var i = 0;
+    while (i < 30) {
+        tetris.gravity(g);
+        i = i + 1;
+    }
+    var prev: [string] = [];
+    let t0 = time.monotonic();
+    var frames = 0;
+    while (frames < 1000) {
+        tetris.move_left(g);
+        let next = screen.frame(g, 0);
+        screen.paint_diff(prev, next);
+        prev = next;
+        tetris.move_right(g);
+        frames = frames + 1;
+    }
+    let build_us = time.monotonic() - t0;
+    print(
+        "frame build+diff: 1000 frames in " + to_string(build_us) + " ms = " + to_string(build_us * 1000 / 1000) + " us/frame"
+    );
+    var worst = 0;
+    var total = 0;
+    i = 0;
+    while (i < 60) {
+        let s0 = time.monotonic();
+        time.sleep(33);
+        let took = time.monotonic() - s0;
+        total = total + took;
+        if (took > worst) {
+            worst = took;
+        }
+        i = i + 1;
+    }
+    print(
+        "sleep(33) x60: avg " + to_string(total / 60) + " ms, worst " + to_string(worst) + " ms (target 33)"
+    );
+    0
+}

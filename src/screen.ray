@@ -1,0 +1,110 @@
+// raygame — the frame builder and line-diff painter (raytop's discipline at
+// 30 fps): a frame is fixed lines, a repaint is absolute-move + overwrite of
+// only the lines that changed.
+import tetris;
+
+pub fn esc() -> string {
+    match (char_from_code(27)) {
+        Option.Some(c) => to_string(c),
+        Option.None => "",
+    }
+}
+
+fn color(kind: int) -> string {
+    // Piece colors: cyan yellow magenta green red blue white.
+    let codes = [36, 33, 35, 32, 31, 34, 37];
+    esc() + "[" + to_string(codes[kind % 7]) + "m"
+}
+
+fn reset() -> string {
+    esc() + "[0m"
+}
+
+fn cell_str(v: int) -> string {
+    if (v == 0) { " ." } else { color(v - 1) + "██" + reset() }
+}
+
+// The full frame: board (double-width cells) + side panel. `flash` inverts
+// the banner on game over.
+pub fn frame(g: tetris.Game, hiscore: int) -> [string] {
+    // Overlay the current piece on a copy of the board.
+    var cells: [int] = [];
+    for v in g.board {
+        cells.push(v);
+    }
+    if (!g.over) {
+        for (x, y) in tetris.piece_cells(g.current).iter() {
+            if (y >= 0 && y < tetris.H && x >= 0 && x < tetris.W) {
+                cells[y * tetris.W + x] = g.current.kind + 1;
+            }
+        }
+    }
+    var out: [string] = [];
+    out.push("  ┌────────────────────┐   raygame");
+    var y = 0;
+    while (y < tetris.H) {
+        var row = "  │";
+        var x = 0;
+        while (x < tetris.W) {
+            row = row + cell_str(cells[y * tetris.W + x]);
+            x = x + 1;
+        }
+        row = row + "│";
+        if (y == 2) {
+            row = row + "   score  " + to_string(g.score);
+        } else if (y == 3) {
+            row = row + "   hi     " + to_string(hiscore);
+        } else if (y == 4) {
+            row = row + "   lines  " + to_string(g.lines);
+        } else if (y == 5) {
+            row = row + "   level  " + to_string(g.level);
+        } else if (y == 8) {
+            row = row + "   next";
+        } else if (y == 9 || y == 10) {
+            row = row + "   " + next_row(g.next_kind, y - 9);
+        } else if (y == 13) {
+            row = row + "   ←→ mover · ↑ rotar";
+        } else if (y == 14) {
+            row = row + "   ↓ bajar · espacio soltar";
+        } else if (y == 15) {
+            row = row + "   p pausa · q salir";
+        } else if (y == 17 && g.over) {
+            row = row + "   " + esc() + "[7m GAME OVER " + reset();
+        }
+        out.push(row);
+        y = y + 1;
+    }
+    out.push("  └────────────────────┘");
+    out
+}
+
+fn next_row(kind: int, row: int) -> string {
+    let preview = tetris.Piece { kind: kind, rot: 0, x: 0, y: 0 };
+    let cells = tetris.piece_cells(preview);
+    var out = "";
+    var x = 0;
+    while (x < 4) {
+        var hit = false;
+        for (cx, cy) in cells.iter() {
+            if (cx == x && cy == row) {
+                hit = true;
+            }
+        }
+        out = out + if (hit) { color(kind) + "██" + reset() } else { "  " };
+        x = x + 1;
+    }
+    out
+}
+
+pub fn paint_diff(prev: [string], next: [string]) -> string {
+    var out = "";
+    var i = 0;
+    while (i < next.len()) {
+        let same = i < prev.len() && prev[i] == next[i];
+        if (!same) {
+            out = out + esc() + "[" + to_string(i + 1) + ";1H" + esc() + "[2K" + next[i];
+        }
+        i = i + 1;
+    }
+    out
+}

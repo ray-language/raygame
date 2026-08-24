@@ -1,0 +1,244 @@
+// raygame — tetris rules, pure and clock-free: the app layer feeds inputs
+// and gravity ticks; everything here is deterministic given the RNG seed.
+import std/random;
+
+pub const W: int = 10;
+
+pub const H: int = 20;
+
+pub struct Piece {
+    kind: int,
+    rot: int,
+    x: int,
+    y: int,
+}
+
+pub struct Game {
+    board: [int],
+    current: Piece,
+    next_kind: int,
+    score: int,
+    lines: int,
+    level: int,
+    over: bool,
+}
+
+// Offsets (x, y) of the 4 cells for each kind × rotation, in a 4×4 box.
+// kinds: 0 I · 1 O · 2 T · 3 S · 4 Z · 5 J · 6 L (colors follow kind).
+fn cells_of(kind: int, rot: int) -> [(int, int)] {
+    let r = rot % 4;
+    if (kind == 0) {
+        if (r == 0 || r == 2) {
+            return [(0, 1), (1, 1), (2, 1), (3, 1)];
+        }
+        return [(2, 0), (2, 1), (2, 2), (2, 3)];
+    }
+    if (kind == 1) {
+        return [(1, 0), (2, 0), (1, 1), (2, 1)];
+    }
+    if (kind == 2) {
+        if (r == 0) {
+            return [(1, 0), (0, 1), (1, 1), (2, 1)];
+        }
+        if (r == 1) {
+            return [(1, 0), (1, 1), (2, 1), (1, 2)];
+        }
+        if (r == 2) {
+            return [(0, 1), (1, 1), (2, 1), (1, 2)];
+        }
+        return [(1, 0), (0, 1), (1, 1), (1, 2)];
+    }
+    if (kind == 3) {
+        if (r == 0 || r == 2) {
+            return [(1, 0), (2, 0), (0, 1), (1, 1)];
+        }
+        return [(1, 0), (1, 1), (2, 1), (2, 2)];
+    }
+    if (kind == 4) {
+        if (r == 0 || r == 2) {
+            return [(0, 0), (1, 0), (1, 1), (2, 1)];
+        }
+        return [(2, 0), (1, 1), (2, 1), (1, 2)];
+    }
+    if (kind == 5) {
+        if (r == 0) {
+            return [(0, 0), (0, 1), (1, 1), (2, 1)];
+        }
+        if (r == 1) {
+            return [(1, 0), (2, 0), (1, 1), (1, 2)];
+        }
+        if (r == 2) {
+            return [(0, 1), (1, 1), (2, 1), (2, 2)];
+        }
+        return [(1, 0), (1, 1), (0, 2), (1, 2)];
+    }
+    if (r == 0) {
+        return [(2, 0), (0, 1), (1, 1), (2, 1)];
+    }
+    if (r == 1) {
+        return [(1, 0), (1, 1), (1, 2), (2, 2)];
+    }
+    if (r == 2) {
+        return [(0, 1), (1, 1), (2, 1), (0, 2)];
+    }
+    return [(0, 0), (1, 0), (1, 1), (1, 2)];
+}
+
+pub fn piece_cells(p: Piece) -> [(int, int)] {
+    var out: [(int, int)] = [];
+    for (dx, dy) in cells_of(p.kind, p.rot).iter() {
+        out.push((p.x + dx, p.y + dy));
+    }
+    out
+}
+
+fn collides(board: [int], p: Piece) -> bool {
+    for (x, y) in piece_cells(p).iter() {
+        if (x < 0 || x >= W || y >= H) {
+            return true;
+        }
+        if (y >= 0 && board[y * W + x] != 0) {
+            return true;
+        }
+    }
+    false
+}
+
+fn spawn_piece(kind: int) -> Piece {
+    Piece { kind: kind, rot: 0, x: 3, y: 0 - 1 }
+}
+
+pub fn new_game() -> Game {
+    var board: [int] = [];
+    var i = 0;
+    while (i < W * H) {
+        board.push(0);
+        i = i + 1;
+    }
+    Game {
+        board: board,
+        current: spawn_piece(random.below(7)),
+        next_kind: random.below(7),
+        score: 0,
+        lines: 0,
+        level: 1,
+        over: false
+    }
+}
+
+fn try_move(g: Game, dx: int, dy: int, drot: int) -> bool {
+    let p = Piece {
+        kind: g.current.kind,
+        rot: g.current.rot + drot,
+        x: g.current.x + dx,
+        y: g.current.y + dy
+    };
+    if (collides(g.board, p)) {
+        return false;
+    }
+    g.current = p;
+    true
+}
+
+pub fn move_left(g: Game) -> bool {
+    if (g.over) { false } else { try_move(g, 0 - 1, 0, 0) }
+}
+
+pub fn move_right(g: Game) -> bool {
+    if (g.over) { false } else { try_move(g, 1, 0, 0) }
+}
+
+pub fn rotate(g: Game) -> bool {
+    if (g.over) { false } else { try_move(g, 0, 0, 1) }
+}
+
+pub fn soft_drop(g: Game) -> bool {
+    if (g.over) { false } else { try_move(g, 0, 1, 0) }
+}
+
+fn clear_lines(g: Game) -> int {
+    var cleared = 0;
+    var y = H - 1;
+    while (y >= 0) {
+        var full = true;
+        var x = 0;
+        while (x < W) {
+            if (g.board[y * W + x] == 0) {
+                full = false;
+            }
+            x = x + 1;
+        }
+        if (full) {
+            cleared = cleared + 1;
+            var yy = y;
+            while (yy > 0) {
+                var xx = 0;
+                while (xx < W) {
+                    g.board[yy * W + xx] = g.board[(yy - 1) * W + xx];
+                    xx = xx + 1;
+                }
+                yy = yy - 1;
+            }
+            var x0 = 0;
+            while (x0 < W) {
+                g.board[x0] = 0;
+                x0 = x0 + 1;
+            }
+        } else {
+            y = y - 1;
+        }
+    }
+    cleared
+}
+
+fn lock(g: Game) {
+    for (x, y) in piece_cells(g.current).iter() {
+        if (y >= 0) {
+            g.board[y * W + x] = g.current.kind + 1;
+        }
+    }
+    let cleared = clear_lines(g);
+    if (cleared > 0) {
+        let base = if (cleared == 1) { 100 } else {
+            if (cleared == 2) { 300 } else {
+                if (cleared == 3) { 500 } else { 800 }
+            }
+        };
+        g.score = g.score + base * g.level;
+        g.lines = g.lines + cleared;
+        g.level = g.lines / 10 + 1;
+    }
+    let fresh = spawn_piece(g.next_kind);
+    g.next_kind = random.below(7);
+    if (collides(g.board, fresh)) {
+        g.over = true;
+    } else {
+        g.current = fresh;
+    }
+}
+
+// One gravity step: the piece falls or locks. Returns true if it locked.
+pub fn gravity(g: Game) -> bool {
+    if (g.over) {
+        return false;
+    }
+    if (try_move(g, 0, 1, 0)) {
+        return false;
+    }
+    lock(g);
+    true
+}
+
+pub fn hard_drop(g: Game) {
+    if (g.over) {
+        return;
+    }
+    while (try_move(g, 0, 1, 0)) { }
+    lock(g);
+}
+
+// ms between gravity steps at the current level.
+pub fn gravity_ms(g: Game) -> int {
+    let ms = 800 - (g.level - 1) * 70;
+    if (ms < 100) { 100 } else { ms }
+}
