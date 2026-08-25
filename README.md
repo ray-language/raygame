@@ -1,6 +1,6 @@
 # raygame
 
-Tetris de terminal a 30 fps, escrito en [raylang](https://github.com/roberto-ayala/raylang). Es la app de **latencia dura**: bucle de juego con reloj de frame + reloj de gravedad independientes, input sin bloqueo (`io.read_timeout` hasta el próximo frame), redibujado diferencial por línea (mover una pieza repinta ≤ 4 líneas — hay test), colores ANSI por pieza, niveles que aceleran, y high score persistente.
+Tetris de terminal a 30 fps, escrito en [raylang](https://github.com/ray-language/raylang). Es la app de **latencia dura**: bucle de juego con reloj de frame + reloj de gravedad independientes, input sin bloqueo (`io.read_timeout` hasta el próximo frame), redibujado diferencial por línea (mover una pieza repinta ≤ 4 líneas — hay test), colores ANSI por pieza, niveles que aceleran, y high score persistente.
 
 ```text
 $ raygame            # ←→ mover · ↑ rotar · ↓ bajar · espacio soltar · p pausa · r reiniciar · q salir
