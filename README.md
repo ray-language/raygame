@@ -14,15 +14,15 @@ $ raygame --bench    # los números de latencia (ver abajo)
 | Métrica | Nativo | VM |
 |---|---|---|
 | Frame completo (lógica + layout + diff), 1000 frames | **21 µs/frame** | 92 µs/frame |
-| `time.sleep(33)` × 60 — media real | **39 ms** | 40 ms |
-| `time.sleep(33)` × 60 — peor caso | **43 ms** | 44 ms |
+| `time.sleep(33)` × 60 — media real | **33 ms** | 33 ms |
+| `time.sleep(33)` × 60 — peor caso | **35 ms** | 35 ms |
 
-Lectura: el render jamás es el cuello (0.06% del presupuesto de 33 ms), pero
-**`time.sleep` se pasa sistemáticamente +6–10 ms en ambos motores** — dormir
-el presupuesto entero daría ~25 fps reales, no 30. El bucle de raygame lo
-compensa planificando por instante absoluto (`next_frame += 33` con clamp),
-así que el juego va suave; el dato queda para IDEAS (§72): la precisión del
-timer del scheduler no alcanza para *frame pacing* ingenuo.
+Lectura: el render jamás es el cuello (0.06% del presupuesto de 33 ms), y
+desde raylang M119 **`time.sleep` es preciso** (~1 ms de desvío; este mismo
+benchmark medía 39–43 ms cuando el hallazgo se anotó — la causa era el
+`nanosleep` de macOS, y el runtime pasó a `poll(2)`). El bucle sigue
+planificando por instante absoluto (`next_frame += 33`), que es el patrón
+sin deriva que el MANUAL de raylang documenta.
 
 ## Cómo está hecho
 
@@ -53,10 +53,10 @@ timer del scheduler no alcanza para *frame pacing* ingenuo.
 
 Anotados en `raylang/IDEAS.md` §72:
 
-1. **`time.sleep` se pasa +6–10 ms consistentemente** (ambos motores): la
-   predicción del catálogo ("precisión de sleep, jitter de frame") con número.
-   Para juegos/pacing hace falta o un sleep más fino o documentar que el
-   patrón correcto es reloj absoluto + `read_timeout` (que sí funciona).
+1. **[RESUELTO — raylang M119]** `time.sleep` se pasa +6–10 ms: el sleep es
+   preciso vía `poll(2)` — este mismo `--bench` pasó de 39/43 ms a 33/35 ms
+   sin tocar la app. El reloj absoluto sigue siendo el patrón para pacing
+   sin deriva (ahora documentado en el MANUAL de raylang).
 2. El patrón tecla-o-plazo aguanta 30 fps sin despeinarse (0.02–0.09 ms de
    frame): la duda del catálogo queda cerrada — el terminal nunca es el
    cuello, el timer sí puede serlo.
